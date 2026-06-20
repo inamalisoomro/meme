@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Type } from "@google/genai";
 import "dotenv/config";
 
 // --- Models & Types ---
@@ -114,21 +113,7 @@ let MEME_DATABASE: Meme[] = [
 ];
 
 const SYSTEM_INSTRUCTION = `You are 'MemeMaster AI', an expert agent designed to manage and generate memes via the Fake Meme API.
-Your goal is to help users create, track, edit, and delete meme records in the database.
-
-Capabilities & Functions available as tools:
-1. create_meme(template_id, top_text, bottom_text): Adds a new meme entry to the database.
-2. get_memes(): Retrieves the current list of all generated memes.
-3. update_meme(meme_id, new_top_text, new_bottom_text): Updates the text on an existing meme.
-4. delete_meme(meme_id): Removes a meme from the database.
-
-Interaction Guidelines:
-- If the user asks to create a meme but has not provided any captions or texts, DO NOT call create_meme yet. Instead, suggest 3 funny witty meme caption ideas for the templates available and invite them to choose one or suggest their own!
-- If the user asks to create a meme and has specified the concept or texts, call create_meme immediately. Choose the template that matches the joke best (e.g., 'grumpy-cat' for complaints, 'two-buttons' for hard choices, 'think' for paradoxical ideas, 'doge' for pure hype, etc.).
-- After any CRUD operation (Create, Update, Delete) succeeds via a tool, confirm the action clearly in your final response with a super enthusiastic, custom witty explanation, and summarize the deleted/created/updated item including its ID clearly so the user knows exactly what changed.
-- If a user provides an invalid ID or an ID that results in an error, politely ask them to check the ID using the get_memes() tool. Do not try to make up a guess.
-- Always be creative, witty, and maintain an authentic, upbeat "meme-culture" tone. Use terms like 'stonks', 'giga-brain', 'noob', 'absolute win', 'much wow', 'respect', 'chad', etc.
-- Never hallucinate API success; wait for the tool output before confirming the change. Wait for the tool results to be returned to you, and base your confirmation response strictly on the actual tool results!`;
+Your goal is to help users create, track, edit, and delete meme records in the database.`;
 
 // --- DB Helper Functions ---
 function db_create_meme(templateId: string, topText: string, bottomText: string): Meme {
@@ -173,97 +158,6 @@ function db_delete_meme(memeId: string) {
   MEME_DATABASE.splice(memeIndex, 1);
   return { success: true, deletedId: memeId, meme: deletedMeme };
 }
-
-// --- Lazy Initializer for GoogleGenAI ---
-let aiInstance: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI {
-  if (!aiInstance) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-      throw new Error("GEMINI_API_KEY environment variable is not defined in the Secrets panel!");
-    }
-    aiInstance = new GoogleGenAI({
-      apiKey: key,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
-    });
-  }
-  return aiInstance;
-}
-
-// --- Tool Declarations for @google/genai ---
-const createMemeDeclaration = {
-  name: "create_meme",
-  description: "Adds a new meme entry to the database. Use this when the user requests or confirms making a meme with specified text and template.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      template_id: {
-        type: Type.STRING,
-        description: "The template ID of the meme, e.g. 'drake', 'distracted', 'doge', 'think', 'two-buttons', 'epic-handshake', 'success-kid', 'disaster-girl', 'grumpy-cat'."
-      },
-      top_text: {
-        type: Type.STRING,
-        description: "The top caption text for the meme. Keep it witty and funny."
-      },
-      bottom_text: {
-        type: Type.STRING,
-        description: "The bottom caption text for the meme."
-      }
-    },
-    required: ["template_id", "top_text", "bottom_text"]
-  }
-};
-
-const getMemesDeclaration = {
-  name: "get_memes",
-  description: "Retrieves the current list of all generated memes. Use this to find available memes or verify database status.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {}
-  }
-};
-
-const updateMemeDeclaration = {
-  name: "update_meme",
-  description: "Updates the text on an existing meme. Use this to modify top or bottom text of an existing meme.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      meme_id: {
-        type: Type.STRING,
-        description: "The exact ID of the meme to update, e.g. 'meme-1'."
-      },
-      new_top_text: {
-        type: Type.STRING,
-        description: "The new top caption text for the meme."
-      },
-      new_bottom_text: {
-        type: Type.STRING,
-        description: "The new bottom caption text for the meme."
-      }
-    },
-    required: ["meme_id", "new_top_text", "new_bottom_text"]
-  }
-};
-
-const deleteMemeDeclaration = {
-  name: "delete_meme",
-  description: "Removes a meme from the database. Use this when the user explicitly requests to delete or remove a meme.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      meme_id: {
-        type: Type.STRING,
-        description: "The exact ID of the meme to delete, e.g. 'meme-1'."
-      }
-    },
-    required: ["meme_id"]
-  }
-};
 
 // --- Main App Server ---
 async function startServer() {
@@ -319,7 +213,7 @@ async function startServer() {
     }
   });
 
-  // 6. Intelligent MemeMaster AI agent Endpoint with functional tool execution
+  // 6. Intelligent MemeMaster AI agent Endpoint with simulated offline tool execution
   app.post("/api/chat", async (req, res) => {
     const { message, history } = req.body;
     
@@ -329,140 +223,204 @@ async function startServer() {
     }
 
     try {
-      const ai = getGeminiClient();
-      
-      // Structure chat context history for Gemini
-      const contents: any[] = [];
-      
-      if (Array.isArray(history)) {
-        for (const turn of history) {
-          contents.push({
-            role: turn.role === "user" ? "user" : "model",
-            parts: [{ text: turn.text }]
-          });
-        }
-      }
-      
-      // Add the new query
-      contents.push({
-        role: "user",
-        parts: [{ text: message }]
-      });
-
-      // Call Gemini 3.5-flash
-      const firstResponse = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents,
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          tools: [{
-            functionDeclarations: [
-              createMemeDeclaration, 
-              getMemesDeclaration, 
-              updateMemeDeclaration, 
-              deleteMemeDeclaration
-            ]
-          }]
-        }
-      });
-
-      const functionCalls = firstResponse.functionCalls;
+      const msgLower = message.toLowerCase().trim();
       const executedTools: any[] = [];
+      let responseText = "";
 
-      if (functionCalls && functionCalls.length > 0) {
-        // We have tool calls requested! Run them locally on our database.
-        const responseParts: any[] = [];
-
-        for (const fc of functionCalls) {
-          const { name, args, id } = fc;
-          let toolResult: any = null;
-
+      // 1. Check for Suggest / Idea prompt
+      if (
+        msgLower.includes("suggest") || 
+        msgLower.includes("caption") || 
+        msgLower.includes("idea") ||
+        msgLower.includes("recommend")
+      ) {
+        responseText = `🧠 **GIGA-BRAIN THINKING ACTIVATED!**\n\nHere are 3 peak-humor, offline-compiled caption ideas for your next meme adventure:\n\n` +
+          `1. **Drake Choice (drake)**\n` +
+          `   - **Top:** "Using manual HTML/CSS styling"\n` +
+          `   - **Bottom:** "Installing zero-dependency Fake Meme API in 2 seconds"\n\n` +
+          `2. **Doge Much Wow (doge)**\n` +
+          `   - **Top:** "Such local, very fast"\n` +
+          `   - **Bottom:** "Many offline, much developer, wow"\n\n` +
+          `3. **Roll Safe Think (think)**\n` +
+          `   - **Top:** "Can't have API key authentication errors"\n` +
+          `   - **Bottom:** "If you are running on a direct simulated database"\n\n` +
+          `Just type e.g., **create doge meme about typescript** or command me with **"Much offline" "Many stonks"**!`;
+      } 
+      // 2. Check for Get / List memes
+      else if (
+        msgLower.includes("get_memes") || 
+        msgLower.includes("get memes") || 
+        msgLower.includes("list") || 
+        msgLower.includes("show") || 
+        msgLower.includes("display") ||
+        msgLower.includes("index")
+      ) {
+        const memesList = db_get_memes();
+        executedTools.push({
+          name: "get_memes",
+          args: {},
+          result: { success: true, count: memesList.length, memes: memesList }
+        });
+        responseText = `📈 **STONKS!** I have loaded the central mainframe database. Currently, we have registered **${memesList.length}** hilarious creations live on the global grid! Let the jokes roll.`;
+      }
+      // 3. Check for Delete Meme
+      else if (
+        msgLower.includes("delete") || 
+        msgLower.includes("purge") || 
+        msgLower.includes("remove") || 
+        msgLower.includes("trash") ||
+        msgLower.includes("vaporize")
+      ) {
+        const matchId = msgLower.match(/meme-\S+/);
+        if (matchId) {
+          const id = matchId[0].replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"']/g, ""); // strip punctuation
           try {
-            if (name === "create_meme") {
-              const resObj = db_create_meme(
-                (args as any).template_id,
-                (args as any).top_text,
-                (args as any).bottom_text
-              );
-              toolResult = { success: true, meme: resObj };
-            } else if (name === "get_memes") {
-              const resObj = db_get_memes();
-              toolResult = { success: true, count: resObj.length, memes: resObj };
-            } else if (name === "update_meme") {
-              const resObj = db_update_meme(
-                (args as any).meme_id,
-                (args as any).new_top_text,
-                (args as any).new_bottom_text
-              );
-              toolResult = { success: true, meme: resObj };
-            } else if (name === "delete_meme") {
-              const resObj = db_delete_meme((args as any).meme_id);
-              toolResult = resObj; // Already returns success & details
-            } else {
-              throw new Error(`Tool ${name} is premium or nonexistent!`);
-            }
+            const deleteResult = db_delete_meme(id);
+            executedTools.push({
+              name: "delete_meme",
+              args: { meme_id: id },
+              result: deleteResult
+            });
+            responseText = `💥 **POW!** Meme with ID **${id}** was officially vaporized. Deleted caption: *"${deleteResult.meme.topText} // ${deleteResult.meme.bottomText}"*. That is clean memory management, absolute win!`;
           } catch (err: any) {
-            toolResult = { success: false, error: err.message };
+            executedTools.push({
+              name: "delete_meme",
+              args: { meme_id: id },
+              result: { success: false, error: err.message }
+            });
+            responseText = `⚠️ **MIND BLOWN!** Attempted to delete ID **${id}**, but the database says: *"${err.message}"*. Try listing them first using **get_memes**!`;
+          }
+        } else {
+          responseText = `🤔 **Wait, target ID missing!** You requested to delete, but didn't specify which ID (e.g., \`meme-1\`). Say something like: **delete meme-1**!`;
+        }
+      }
+      // 4. Check for Update Meme
+      else if (
+        msgLower.includes("update") || 
+        msgLower.includes("edit") || 
+        msgLower.includes("change") || 
+        msgLower.includes("modify")
+      ) {
+        const matchId = msgLower.match(/meme-\S+/);
+        if (matchId) {
+          const id = matchId[0].replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"']/g, "");
+          // Find double quotes content
+          const quotes: string[] = [];
+          const regex = /"([^"]+)"|'([^']+)'/g;
+          let match;
+          while ((match = regex.exec(message)) !== null) {
+            quotes.push(match[1] || match[2]);
           }
 
-          executedTools.push({
-            name,
-            args,
-            result: toolResult
-          });
-
-          responseParts.push({
-            functionResponse: {
-              name,
-              response: { result: toolResult },
-              id: id || `call-${Date.now()}`
+          if (quotes.length > 0) {
+            const topText = quotes[0] || "";
+            const bottomText = quotes[1] || "";
+            try {
+              const updatedMeme = db_update_meme(id, topText, bottomText);
+              executedTools.push({
+                name: "update_meme",
+                args: { meme_id: id, new_top_text: topText, new_bottom_text: bottomText },
+                result: { success: true, meme: updatedMeme }
+              });
+              responseText = `✏️ **GIGA-EDIT COMPLETED!** Meme **${id}** is rewritten. New witty vibe: *"${topText} // ${bottomText}"*. Stonks are soaring!`;
+            } catch (err: any) {
+              executedTools.push({
+                name: "update_meme",
+                args: { meme_id: id, new_top_text: topText, new_bottom_text: bottomText },
+                result: { success: false, error: err.message }
+              });
+              responseText = `⚠️ **ERROR VIBES!** Could not update **${id}**. Reason: *"${err.message}"*. Make sure the ID exists in our records!`;
             }
-          });
+          } else {
+            responseText = `💡 **Formatting Tip!** I see you want to edit **${id}**. Please enclose your new top and bottom captions in double quotes: **update ${id} "new top" "new bottom"**!`;
+          }
+        } else {
+          responseText = `⚠️ **Wait a minute!** Which meme are we updating? Please supply a valid ID like \`meme-1\` and quotes: **update meme-1 "new text" "wow"**!`;
+        }
+      }
+      // 5. Check for Create Meme
+      else if (
+        msgLower.includes("create") || 
+        msgLower.includes("make") || 
+        msgLower.includes("generate") || 
+        msgLower.includes("add") || 
+        msgLower.includes("new")
+      ) {
+        // Find which template to use
+        let templateId = "doge"; // Default fallback
+        for (const t of MEME_TEMPLATES) {
+          const templateKeyword = t.id.toLowerCase();
+          const nameKeywords = t.name.toLowerCase().split(" ");
+          if (msgLower.includes(templateKeyword) || nameKeywords.some(kw => kw.length > 3 && msgLower.includes(kw))) {
+            templateId = t.id;
+            break;
+          }
         }
 
-        // Send the execution output back to Gemini
-        const nextContents = [
-          ...contents,
-          firstResponse.candidates?.[0]?.content, // Contains original tool requests
-          {
-            role: "tool",
-            parts: responseParts
+        // Find double quotes content
+        const quotes: string[] = [];
+        const regex = /"([^"]+)"|'([^']+)'/g;
+        let match;
+        while ((match = regex.exec(message)) !== null) {
+          quotes.push(match[1] || match[2]);
+        }
+
+        let topText = "";
+        let bottomText = "";
+
+        if (quotes.length >= 2) {
+          topText = quotes[0];
+          bottomText = quotes[1];
+        } else if (quotes.length === 1) {
+          topText = quotes[0];
+          bottomText = "Many wow!";
+        } else {
+          // No quotes found - see if there's "about X"
+          const aboutIdx = msgLower.indexOf("about ");
+          if (aboutIdx !== -1) {
+            const topic = message.substring(aboutIdx + 6).trim();
+            topText = `Much ${topic}`;
+            bottomText = `Very wow, many developer!`;
+          } else {
+            // Use defaults of the template
+            const template = MEME_TEMPLATES.find(t => t.id === templateId);
+            topText = template?.presetTop || "No top text";
+            bottomText = template?.presetBottom || "No bottom text";
           }
-        ];
+        }
 
-        const secondResponse = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: nextContents,
-          config: {
-            systemInstruction: SYSTEM_INSTRUCTION,
-            tools: [{
-              functionDeclarations: [
-                createMemeDeclaration, 
-                getMemesDeclaration, 
-                updateMemeDeclaration, 
-                deleteMemeDeclaration
-              ]
-            }]
-          }
-        });
-
-        res.json({
-          text: secondResponse.text || "Your meme action was executed flawlessly! Keep styling those pixels.",
-          memes: MEME_DATABASE,
-          toolCalls: executedTools
-        });
-
-      } else {
-        // No tool was called; just return the conversational agent output
-        res.json({
-          text: firstResponse.text || "I'm processing the meme vibes. What's on your mind?",
-          memes: MEME_DATABASE,
-          toolCalls: []
-        });
+        try {
+          const newMeme = db_create_meme(templateId, topText, bottomText);
+          executedTools.push({
+            name: "create_meme",
+            args: { template_id: templateId, top_text: topText, bottom_text: bottomText },
+            result: { success: true, meme: newMeme }
+          });
+          responseText = `🚀 **BOOM! BRAND NEW MEME DETONATED!** Styled using the legendary **"${templateId}"** template. Injected with top caption *"${topText}"* and bottom caption *"${bottomText}"*. Registered globally with ID: **${newMeme.id}**!`;
+        } catch (err: any) {
+          responseText = `⚠️ **Meme Creation Failed!** Reason: *"${err.message}"*. Try another template, Chad!`;
+        }
       }
+      // 6. Conversational Fallback
+      else {
+        responseText = `✨ **Greetings, fellow meme lord!** I am simulated MemeMaster AI, running on a 100% offline local fake meme maker engine!\n\n` +
+          `No keys or internet required. I handle all manual CRUD data commands instantly. Just ask me to:\n` +
+          `- 📝 **"create a doge meme about React"**\n` +
+          `- 💡 **"suggest 3 captions first"**\n` +
+          `- 📈 **"get_memes"** (lists active memes)\n` +
+          `- ✏️ **"update meme-1 'new top' 'new bottom'"**\n` +
+          `- 💥 **"delete meme-1"**\n\n` +
+          `Let's boost some virtual engagement metrics! What are we creating today?`;
+      }
+
+      res.json({
+        text: responseText,
+        memes: MEME_DATABASE,
+        toolCalls: executedTools
+      });
 
     } catch (error: any) {
-      console.error("Gemini server error: ", error);
+      console.error("Local NLP parsing error: ", error);
       res.status(500).json({ 
         error: error.message || "An error occurred with MemeMaster AI's neural cells.",
         memes: MEME_DATABASE 
